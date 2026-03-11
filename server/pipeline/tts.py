@@ -48,6 +48,7 @@ class ElevenLabsTTS:
                     voice_id=self.voice_id,
                     text=text,
                     model_id=self.model_id,
+                    output_format="pcm_16000",
                 )
             )
             # Collect all audio chunks
@@ -55,7 +56,7 @@ class ElevenLabsTTS:
             for chunk in audio_iter:
                 audio_chunks.append(chunk)
             audio = b"".join(audio_chunks)
-            logger.info(f"TTS synthesized {len(audio)} bytes for: {text[:50]}...")
+            logger.info(f"TTS synthesized {len(audio)} PCM16 bytes for: {text[:50]}...")
             return audio
 
         except Exception as e:
@@ -82,6 +83,7 @@ class ElevenLabsTTS:
                     voice_id=self.voice_id,
                     text=text,
                     model_id=self.model_id,
+                    output_format="pcm_16000",
                 )
             )
 

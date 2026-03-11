@@ -18,7 +18,16 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize Simli session when active
+  // Keep callbacks in refs so the effect doesn't re-fire when they change
+  const onModeChangeRef = useRef(onModeChange);
+  onModeChangeRef.current = onModeChange;
+  const onConnectionChangeRef = useRef(onConnectionChange);
+  onConnectionChangeRef.current = onConnectionChange;
+
+  // Track cleanup state
+  const cleaningUpRef = useRef(false);
+
+  // Only depends on `active` — callbacks accessed via refs
   useEffect(() => {
     if (!active || !videoRef.current || !audioRef.current) {
       return;
@@ -27,13 +36,22 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
     let cancelled = false;
 
     const init = async () => {
+      // Wait for any ongoing cleanup (max 3 seconds)
+      const deadline = Date.now() + 3000;
+      while (cleaningUpRef.current && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      cleaningUpRef.current = false; // Force clear if timed out
+
+      if (cancelled) return;
+
       try {
         setError(null);
         const session = await createSimliSession(
           videoRef.current!,
           audioRef.current!,
-          () => onModeChange?.("speaking"),
-          () => onModeChange?.("listening"),
+          () => onModeChangeRef.current?.("speaking"),
+          () => onModeChangeRef.current?.("listening"),
           (msg) => {
             console.error("Simli error:", msg);
             setError(msg);
@@ -41,17 +59,16 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
         );
 
         if (cancelled) {
-          session.stop();
+          session.stop().catch(() => {});
           return;
         }
 
         sessionRef.current = session;
-        // Mute Simli's audio output (we play TTS via Web Audio API)
         if (audioRef.current) {
           audioRef.current.volume = 0;
         }
         setConnected(true);
-        onConnectionChange?.(true);
+        onConnectionChangeRef.current?.(true);
       } catch (err) {
         if (!cancelled) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -65,14 +82,22 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
 
     return () => {
       cancelled = true;
-      if (sessionRef.current) {
-        sessionRef.current.stop();
-        sessionRef.current = null;
-      }
+      const session = sessionRef.current;
+      sessionRef.current = null;
       setConnected(false);
-      onConnectionChange?.(false);
+      onConnectionChangeRef.current?.(false);
+
+      if (session) {
+        cleaningUpRef.current = true;
+        session.stop()
+          .catch(() => {})
+          .finally(() => {
+            cleaningUpRef.current = false;
+          });
+      }
     };
-  }, [active, onModeChange, onConnectionChange]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   // Expose sendAudio for parent to call
   const sendAudio = useCallback((pcm16: ArrayBuffer) => {
@@ -87,7 +112,7 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
   const apiRef = useRef({ sendAudio, clearBuffer });
   apiRef.current = { sendAudio, clearBuffer };
 
-  // Attach apiRef to video element's dataset for parent access
+  // Attach apiRef to video element for parent access
   useEffect(() => {
     if (videoRef.current) {
       (videoRef.current as HTMLVideoElement & { avatarApi?: typeof apiRef.current }).avatarApi = apiRef.current;
@@ -97,7 +122,6 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
   return (
     <div className="avatar-area">
       <div className={`avatar-container ${avatarMode} ${connected ? "connected" : ""}`}>
-        {/* Simli video element */}
         <video
           ref={videoRef}
           autoPlay
@@ -105,11 +129,8 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
           className="avatar-video"
           style={{ display: connected ? "block" : "none" }}
         />
-        {/* Simli needs an audio element for WebRTC. Keep unmuted for WebRTC init,
-            but volume=0 since we play TTS through Web Audio API */}
         <audio ref={audioRef} autoPlay playsInline />
 
-        {/* Fallback placeholder when not connected */}
         {!connected && (
           <div className="avatar-placeholder-inner">
             <div className="avatar-icon">
@@ -123,7 +144,6 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
           </div>
         )}
 
-        {/* Mode indicator overlay */}
         {connected && (
           <div className="avatar-mode-overlay">
             <span className={`mode-dot ${avatarMode}`} />
@@ -137,7 +157,6 @@ export function AvatarView({ active, avatarMode, onModeChange, onConnectionChang
   );
 }
 
-// Export ref type for parent to use
 export type AvatarViewHandle = {
   sendAudio: (pcm16: ArrayBuffer) => void;
   clearBuffer: () => void;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAudioPlayback } from "@/hooks/useAudioPlayback";
 import { AudioCapture } from "@/components/AudioCapture";
@@ -29,6 +29,9 @@ export function TutorSession() {
 
   // Ref to access AvatarView's video element for Simli audio feed
   const avatarVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Auto-scroll conversation feed
+  const feedRef = useRef<HTMLDivElement>(null);
 
   const { playChunk, stop: stopPlayback } = useAudioPlayback();
 
@@ -189,6 +192,13 @@ export function TutorSession() {
     }
   }, []);
 
+  // Auto-scroll to bottom when conversation or streaming response updates
+  useEffect(() => {
+    if (feedRef.current) {
+      feedRef.current.scrollTop = feedRef.current.scrollHeight;
+    }
+  }, [conversation, currentResponse, currentTranscript]);
+
   const isConnected = status === "connected";
 
   return (
@@ -220,7 +230,7 @@ export function TutorSession() {
       )}
 
       {/* Conversation feed */}
-      <div className="conversation-feed">
+      <div className="conversation-feed" ref={feedRef}>
         {conversation.map((entry, i) => (
           <div key={i} className={`message ${entry.role}`}>
             <span className="message-role">

@@ -4,9 +4,8 @@ Coordinates all pipeline stages for a single conversational turn:
 1. Receive audio chunks from client
 2. Feed to VAD → detect speech end
 3. Transcribe with STT
-4. Generate LLM response
-5. (Phase 3: Stream to TTS → avatar)
-6. Emit per-stage metrics
+4. Stream LLM tokens → sentence chunker → TTS → audio out
+5. Emit per-stage metrics
 """
 
 import logging
@@ -14,8 +13,10 @@ import time
 from dataclasses import dataclass, field
 
 from pipeline.vad import VoiceActivityDetector
-from pipeline.stt import DeepgramSTT
+from pipeline.stt import AssemblyAISTT
 from pipeline.llm_fast import GroqLLM
+from pipeline.sentence_chunker import SentenceChunker
+from pipeline.tts import ElevenLabsTTS
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class TurnMetrics:
     stt_ms: float = 0.0
     llm_ttft_ms: float = 0.0
     llm_total_ms: float = 0.0
+    tts_first_ms: float = 0.0
     e2e_ms: float = 0.0
 
 
@@ -44,27 +46,20 @@ class PipelineOrchestrator:
 
     def __init__(self):
         self.vad = VoiceActivityDetector()
-        self.stt = DeepgramSTT()
+        self.stt = AssemblyAISTT()
         self.llm = GroqLLM()
+        self.chunker = SentenceChunker()
+        self.tts = ElevenLabsTTS()
         self.session = SessionState()
 
     def process_audio_chunk(self, audio_bytes: bytes) -> dict:
-        """Process an incoming audio chunk through VAD.
-
-        Returns VAD state indicating whether to trigger the pipeline.
-        """
+        """Process an incoming audio chunk through VAD."""
         return self.vad.process_chunk(audio_bytes)
 
     async def process_turn(self, audio_bytes: bytes) -> dict:
         """Process a complete turn: audio → STT → LLM → response text.
 
-        This is the Phase 2 sequential pipeline. Streaming is added in Phase 3.
-
-        Args:
-            audio_bytes: Complete audio for this turn (PCM16, 16kHz, mono).
-
-        Returns:
-            dict with transcript, response, and metrics.
+        Non-streaming version for simple request/response.
         """
         self.session.turn_count += 1
         turn_id = self.session.turn_count
@@ -92,12 +87,7 @@ class PipelineOrchestrator:
         t_llm_end = time.perf_counter()
 
         # Update conversation history
-        self.session.conversation_history.append({"role": "user", "content": transcript})
-        self.session.conversation_history.append({"role": "assistant", "content": response})
-
-        # Keep history manageable (last 20 messages)
-        if len(self.session.conversation_history) > 20:
-            self.session.conversation_history = self.session.conversation_history[-20:]
+        self._update_history(transcript, response)
 
         t_end = time.perf_counter()
 
@@ -128,16 +118,21 @@ class PipelineOrchestrator:
         }
 
     async def process_turn_streaming(self, audio_bytes: bytes):
-        """Process a turn with streaming LLM output.
+        """Process a turn with full streaming: STT → LLM → Chunker → TTS → audio.
 
-        Yields partial results as they become available.
-        Full streaming pipeline (→ TTS → avatar) is wired in Phase 3.
+        Yields events as they occur:
+        - transcript: STT result
+        - llm_ttft: LLM first token timing
+        - token: individual LLM tokens
+        - sentence: complete sentence from chunker
+        - audio: TTS audio chunk bytes (base64 encoded)
+        - turn_complete: final metrics
         """
         self.session.turn_count += 1
         turn_id = self.session.turn_count
         t_start = time.perf_counter()
 
-        # STT
+        # --- STT ---
         t_stt_start = time.perf_counter()
         transcript = await self.stt.transcribe_audio(audio_bytes)
         t_stt_end = time.perf_counter()
@@ -153,10 +148,13 @@ class PipelineOrchestrator:
             "stt_ms": round((t_stt_end - t_stt_start) * 1000, 1),
         }
 
-        # Stream LLM tokens
+        # --- Stream LLM tokens → sentence chunker → TTS ---
         t_llm_start = time.perf_counter()
         first_token = True
+        first_tts_byte = True
+        t_tts_first = None
         full_response = []
+        self.chunker.reset()
 
         async for token in self.llm.generate_stream(
             user_message=transcript,
@@ -170,29 +168,61 @@ class PipelineOrchestrator:
             full_response.append(token)
             yield {"type": "token", "turn_id": turn_id, "text": token}
 
-        t_llm_end = time.perf_counter()
-        response_text = "".join(full_response)
+            # Feed to sentence chunker
+            sentence = self.chunker.add_token(token)
+            if sentence:
+                yield {"type": "sentence", "turn_id": turn_id, "text": sentence}
 
-        # Update conversation history
-        self.session.conversation_history.append({"role": "user", "content": transcript})
-        self.session.conversation_history.append({"role": "assistant", "content": response_text})
-        if len(self.session.conversation_history) > 20:
-            self.session.conversation_history = self.session.conversation_history[-20:]
+                # Stream sentence to TTS
+                async for audio_chunk in self.tts.synthesize_streaming(sentence):
+                    if first_tts_byte:
+                        t_tts_first = time.perf_counter()
+                        first_tts_byte = False
+                    yield {"type": "audio", "turn_id": turn_id, "data": audio_chunk}
+
+        t_llm_end = time.perf_counter()
+
+        # Flush remaining text from chunker
+        remaining = self.chunker.flush()
+        if remaining:
+            yield {"type": "sentence", "turn_id": turn_id, "text": remaining}
+            async for audio_chunk in self.tts.synthesize_streaming(remaining):
+                if first_tts_byte:
+                    t_tts_first = time.perf_counter()
+                    first_tts_byte = False
+                yield {"type": "audio", "turn_id": turn_id, "data": audio_chunk}
+
+        response_text = "".join(full_response)
+        self._update_history(transcript, response_text)
 
         t_end = time.perf_counter()
+
+        # Compute TTS first byte latency (from end of STT)
+        tts_first_ms = 0.0
+        if t_tts_first is not None:
+            tts_first_ms = (t_tts_first - t_stt_end) * 1000
 
         yield {
             "type": "turn_complete",
             "turn_id": turn_id,
             "metrics": {
                 "stt_ms": round((t_stt_end - t_stt_start) * 1000, 1),
-                "llm_ttft_ms": round((t_llm_end - t_llm_start) * 1000, 1),
+                "llm_ttft_ms": round(ttft if not first_token else 0, 1),
                 "llm_total_ms": round((t_llm_end - t_llm_start) * 1000, 1),
+                "tts_first_ms": round(tts_first_ms, 1),
                 "e2e_ms": round((t_end - t_start) * 1000, 1),
             },
         }
 
+    def _update_history(self, user_text: str, assistant_text: str):
+        """Update conversation history, keeping last 20 messages."""
+        self.session.conversation_history.append({"role": "user", "content": user_text})
+        self.session.conversation_history.append({"role": "assistant", "content": assistant_text})
+        if len(self.session.conversation_history) > 20:
+            self.session.conversation_history = self.session.conversation_history[-20:]
+
     def reset(self):
         """Reset session state."""
         self.vad.reset()
+        self.chunker.reset()
         self.session = SessionState()

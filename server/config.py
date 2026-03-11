@@ -5,9 +5,9 @@ from pathlib import Path
 
 class Settings(BaseSettings):
     # API Keys
-    deepgram_api_key: str = Field(default="", description="Deepgram API key for STT")
+    assemblyai_api_key: str = Field(default="", description="AssemblyAI API key for STT")
     groq_api_key: str = Field(default="", description="Groq API key for fast LLM")
-    openai_api_key: str = Field(default="", description="OpenAI API key for quality LLM")
+    anthropic_api_key: str = Field(default="", description="Anthropic API key for quality LLM (Claude)")
     elevenlabs_api_key: str = Field(default="", description="ElevenLabs API key for TTS")
     simli_api_key: str = Field(default="", description="Simli API key for avatar")
 
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # LLM
     groq_model: str = "llama-3.3-70b-versatile"
-    openai_model: str = "gpt-4o-mini"
+    anthropic_model: str = "claude-sonnet-4-6"
 
     model_config = {
         "env_file": str(Path(__file__).parent.parent / ".env"),

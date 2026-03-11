@@ -1,13 +1,13 @@
 """Unit tests for Speech-to-Text module."""
 
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
-from pipeline.stt import DeepgramSTT
+from unittest.mock import patch
+from pipeline.stt import AssemblyAISTT
 
 
-class TestDeepgramSTT:
+class TestAssemblyAISTT:
     def setup_method(self):
-        self.stt = DeepgramSTT()
+        self.stt = AssemblyAISTT()
 
     @pytest.mark.asyncio
     async def test_empty_api_key_returns_empty(self):
@@ -37,6 +37,14 @@ class TestDeepgramSTT:
 
     def test_init_sets_api_key_from_settings(self):
         """Should initialize with API key from settings."""
-        stt = DeepgramSTT()
-        # Just verify it initializes without error
+        stt = AssemblyAISTT()
         assert stt._client is None
+
+    def test_pcm16_to_wav(self):
+        """Should produce valid WAV bytes from PCM16 data."""
+        stt = AssemblyAISTT()
+        pcm_data = b"\x00\x01" * 800  # 800 samples
+        wav_bytes = stt._pcm16_to_wav(pcm_data)
+        # WAV files start with RIFF header
+        assert wav_bytes[:4] == b"RIFF"
+        assert wav_bytes[8:12] == b"WAVE"

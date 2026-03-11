@@ -58,7 +58,7 @@ feat: scaffold project structure with FastAPI server, Next.js client, config, an
 ---
 
 ## Phase 2: Server Pipeline — VAD + STT + Basic LLM
-**Status**: [ ] NOT STARTED
+**Status**: [x] DONE
 **Goal**: Audio bytes → transcript → LLM text response (non-streaming, server-only).
 
 ### Tasks
@@ -445,7 +445,7 @@ feat: add benchmarking framework, latency regression tests, and full documentati
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Project Scaffolding & Configuration | [x] DONE |
-| 2 | Server Pipeline — VAD + STT + Basic LLM | [ ] NOT STARTED |
+| 2 | Server Pipeline — VAD + STT + Basic LLM | [x] DONE |
 | 3 | Sentence Chunker + TTS + Streaming Pipeline | [ ] NOT STARTED |
 | 4 | Frontend Foundation + Audio Capture | [ ] NOT STARTED |
 | 5 | Simli Avatar Integration | [ ] NOT STARTED |

@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.3-70b-versatile"
     anthropic_model: str = "claude-sonnet-4-6"
 
+    # Avatar
+    simli_face_id: str = "tmp9i8bbq7c"  # Default Simli face
+
     model_config = {
         "env_file": str(Path(__file__).parent.parent / ".env"),
         "env_file_encoding": "utf-8",

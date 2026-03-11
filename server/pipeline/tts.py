@@ -6,6 +6,7 @@ streaming WebSocket interface for low-latency speech synthesis.
 
 import asyncio
 import logging
+import re
 from typing import AsyncGenerator
 
 from config import settings
@@ -28,6 +29,27 @@ class ElevenLabsTTS:
             self._client = ElevenLabs(api_key=self.api_key)
         return self._client
 
+    @staticmethod
+    def _clean_for_speech(text: str) -> str:
+        """Strip markdown formatting so TTS reads naturally."""
+        # Remove bold/italic markers: **text** → text, *text* → text, __text__ → text
+        text = re.sub(r'\*{1,3}([^*]+)\*{1,3}', r'\1', text)
+        text = re.sub(r'_{1,3}([^_]+)_{1,3}', r'\1', text)
+        # Remove markdown headers: ### Header → Header
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        # Remove inline code backticks: `code` → code
+        text = re.sub(r'`([^`]+)`', r'\1', text)
+        # Remove markdown links: [text](url) → text
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        # Remove bullet markers: - item or * item → item
+        text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+        # Remove numbered list markers: 1. item → item
+        text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+        # Collapse multiple spaces/newlines
+        text = re.sub(r'\n+', ' ', text)
+        text = re.sub(r'\s{2,}', ' ', text)
+        return text.strip()
+
     async def synthesize(self, text: str) -> bytes:
         """Synthesize text to audio bytes (non-streaming).
 
@@ -39,6 +61,10 @@ class ElevenLabsTTS:
         """
         if not self.api_key:
             logger.warning("No ElevenLabs API key set, returning empty audio")
+            return b""
+
+        text = self._clean_for_speech(text)
+        if not text:
             return b""
 
         try:
@@ -74,6 +100,10 @@ class ElevenLabsTTS:
         """
         if not self.api_key:
             logger.warning("No ElevenLabs API key set, yielding empty")
+            return
+
+        text = self._clean_for_speech(text)
+        if not text:
             return
 
         try:

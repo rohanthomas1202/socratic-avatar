@@ -1,15 +1,12 @@
-import base64
 import json
 import logging
-import time
 
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from pipeline.orchestrator import PipelineOrchestrator
-from pipeline.sentence_chunker import SentenceChunker
-from pipeline.tts import ElevenLabsTTS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,6 +27,27 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/api/simli/token")
+async def simli_token():
+    """Generate a Simli session token (keeps API key server-side)."""
+    if not settings.simli_api_key:
+        return {"error": "SIMLI_API_KEY not configured"}, 500
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://api.simli.ai/startAudioToVideoSession",
+            json={
+                "apiKey": settings.simli_api_key,
+                "faceId": settings.simli_face_id,
+                "handleSilence": True,
+                "maxSessionLength": 3600,
+                "maxIdleTime": 300,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 @app.websocket("/ws/session")
 async def websocket_session(ws: WebSocket):
     """WebSocket endpoint for a tutoring session.
@@ -37,11 +55,14 @@ async def websocket_session(ws: WebSocket):
     Protocol:
     - Client sends: binary audio chunks (PCM16, 16kHz, mono)
                     OR JSON text messages for control
-    - Server sends: JSON messages with transcripts, tokens, metrics
+    - Server sends: JSON messages with transcripts, tokens, metrics, socratic_state
                     Binary messages with TTS audio chunks
     """
     await ws.accept()
-    orchestrator = PipelineOrchestrator()
+
+    concept_id = None
+    orchestrator = None
+
     logger.info("WebSocket session connected")
 
     try:
@@ -50,6 +71,10 @@ async def websocket_session(ws: WebSocket):
 
             if "bytes" in message and message["bytes"]:
                 audio_bytes = message["bytes"]
+
+                if orchestrator is None:
+                    orchestrator = PipelineOrchestrator(concept_id=concept_id)
+
                 vad_result = orchestrator.process_audio_chunk(audio_bytes)
 
                 if vad_result["speech_started"]:
@@ -62,7 +87,6 @@ async def websocket_session(ws: WebSocket):
                     if buffered_audio:
                         async for event in orchestrator.process_turn_streaming(buffered_audio):
                             if event["type"] == "audio":
-                                # Send audio as binary WebSocket frame
                                 await ws.send_bytes(event["data"])
                             else:
                                 await ws.send_json(event)
@@ -73,14 +97,31 @@ async def websocket_session(ws: WebSocket):
                 data = json.loads(message["text"])
                 msg_type = data.get("type", "")
 
-                if msg_type == "text_input":
-                    # Text input with full streaming pipeline (LLM → Chunker → TTS)
+                if msg_type == "session_start":
+                    concept_id = data.get("concept_id", "division_by_zero")
+                    orchestrator = PipelineOrchestrator(concept_id=concept_id)
+                    logger.info(f"Session started with concept: {concept_id}")
+                    await ws.send_json({
+                        "type": "session_started",
+                        "concept_id": concept_id,
+                        "socratic_state": orchestrator.current_state.value,
+                    })
+
+                elif msg_type == "text_input":
                     text = data.get("text", "")
                     if text:
-                        await _handle_text_turn(ws, orchestrator, text)
+                        if orchestrator is None:
+                            orchestrator = PipelineOrchestrator(concept_id=concept_id)
+
+                        async for event in orchestrator.process_text_turn_streaming(text):
+                            if event["type"] == "audio":
+                                await ws.send_bytes(event["data"])
+                            else:
+                                await ws.send_json(event)
 
                 elif msg_type == "reset":
-                    orchestrator.reset()
+                    if orchestrator:
+                        orchestrator.reset()
                     await ws.send_json({"type": "session_reset"})
 
                 elif msg_type == "ping":
@@ -99,78 +140,3 @@ async def websocket_session(ws: WebSocket):
             await ws.close(code=1011, reason=str(e))
         except RuntimeError:
             pass
-
-
-async def _handle_text_turn(ws: WebSocket, orchestrator: PipelineOrchestrator, text: str):
-    """Handle a text-input turn with full streaming pipeline."""
-    orchestrator.session.turn_count += 1
-    turn_id = orchestrator.session.turn_count
-    t_start = time.perf_counter()
-
-    await ws.send_json({
-        "type": "transcript",
-        "turn_id": turn_id,
-        "text": text,
-        "stt_ms": 0,
-    })
-
-    # Stream LLM → Chunker → TTS
-    chunker = SentenceChunker()
-    tts = orchestrator.tts
-    t_llm_start = time.perf_counter()
-    first_token = True
-    first_tts = True
-    ttft_ms = 0.0
-    tts_first_ms = 0.0
-    full_response = []
-
-    async for token in orchestrator.llm.generate_stream(
-        user_message=text,
-        conversation_history=orchestrator.session.conversation_history,
-    ):
-        if first_token:
-            ttft_ms = (time.perf_counter() - t_llm_start) * 1000
-            await ws.send_json({"type": "llm_ttft", "turn_id": turn_id, "ttft_ms": round(ttft_ms, 1)})
-            first_token = False
-
-        full_response.append(token)
-        await ws.send_json({"type": "token", "turn_id": turn_id, "text": token})
-
-        # Sentence chunking → TTS
-        sentence = chunker.add_token(token)
-        if sentence:
-            await ws.send_json({"type": "sentence", "turn_id": turn_id, "text": sentence})
-            async for audio_chunk in tts.synthesize_streaming(sentence):
-                if first_tts:
-                    tts_first_ms = (time.perf_counter() - t_llm_start) * 1000
-                    first_tts = False
-                await ws.send_bytes(audio_chunk)
-
-    t_llm_end = time.perf_counter()
-
-    # Flush remaining
-    remaining = chunker.flush()
-    if remaining:
-        await ws.send_json({"type": "sentence", "turn_id": turn_id, "text": remaining})
-        async for audio_chunk in tts.synthesize_streaming(remaining):
-            if first_tts:
-                tts_first_ms = (time.perf_counter() - t_llm_start) * 1000
-                first_tts = False
-            await ws.send_bytes(audio_chunk)
-
-    response_text = "".join(full_response)
-    orchestrator._update_history(text, response_text)
-
-    t_end = time.perf_counter()
-
-    await ws.send_json({
-        "type": "turn_complete",
-        "turn_id": turn_id,
-        "metrics": {
-            "stt_ms": 0,
-            "llm_ttft_ms": round(ttft_ms, 1),
-            "llm_total_ms": round((t_llm_end - t_llm_start) * 1000, 1),
-            "tts_first_ms": round(tts_first_ms, 1),
-            "e2e_ms": round((t_end - t_start) * 1000, 1),
-        },
-    })

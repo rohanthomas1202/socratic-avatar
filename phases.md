@@ -101,7 +101,7 @@ feat: add VAD, Deepgram STT, and Groq LLM pipeline with WebSocket endpoint
 ---
 
 ## Phase 3: Sentence Chunker + TTS + Streaming Pipeline
-**Status**: [ ] NOT STARTED
+**Status**: [x] DONE
 **Goal**: LLM tokens stream → sentence chunker → TTS → audio bytes back. True streaming.
 
 ### Tasks
@@ -146,7 +146,7 @@ feat: add sentence chunker, ElevenLabs TTS, and streaming pipeline wiring
 ---
 
 ## Phase 4: Frontend Foundation + Audio Capture
-**Status**: [ ] NOT STARTED
+**Status**: [x] DONE
 **Goal**: Next.js app captures mic audio, sends via WebSocket, plays back TTS audio.
 
 ### Tasks
@@ -197,7 +197,7 @@ feat: add Next.js frontend with mic capture, WebSocket streaming, and audio play
 ---
 
 ## Phase 5: Simli Avatar Integration
-**Status**: [ ] NOT STARTED
+**Status**: [x] DONE
 **Goal**: Avatar renders lip-synced video from TTS audio. Behavioral modes working.
 
 ### Tasks
@@ -446,9 +446,9 @@ feat: add benchmarking framework, latency regression tests, and full documentati
 |-------|-------------|--------|
 | 1 | Project Scaffolding & Configuration | [x] DONE |
 | 2 | Server Pipeline — VAD + STT + Basic LLM | [x] DONE |
-| 3 | Sentence Chunker + TTS + Streaming Pipeline | [ ] NOT STARTED |
-| 4 | Frontend Foundation + Audio Capture | [ ] NOT STARTED |
-| 5 | Simli Avatar Integration | [ ] NOT STARTED |
+| 3 | Sentence Chunker + TTS + Streaming Pipeline | [x] DONE |
+| 4 | Frontend Foundation + Audio Capture | [x] DONE |
+| 5 | Simli Avatar Integration | [x] DONE |
 | 6 | Socratic State Machine + LLM Router | [ ] NOT STARTED |
 | 7 | Instrumentation + Latency Dashboard + Cost Tracking | [ ] NOT STARTED |
 | 8 | Benchmarking, Full Test Suite & Documentation | [ ] NOT STARTED |

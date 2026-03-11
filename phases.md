@@ -6,7 +6,7 @@
 ---
 
 ## Phase 1: Project Scaffolding & Configuration
-**Status**: [ ] NOT STARTED
+**Status**: [x] DONE
 **Goal**: Complete project structure, all dependencies installed, config system working.
 
 ### Tasks
@@ -444,7 +444,7 @@ feat: add benchmarking framework, latency regression tests, and full documentati
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Project Scaffolding & Configuration | [ ] NOT STARTED |
+| 1 | Project Scaffolding & Configuration | [x] DONE |
 | 2 | Server Pipeline — VAD + STT + Basic LLM | [ ] NOT STARTED |
 | 3 | Sentence Chunker + TTS + Streaming Pipeline | [ ] NOT STARTED |
 | 4 | Frontend Foundation + Audio Capture | [ ] NOT STARTED |

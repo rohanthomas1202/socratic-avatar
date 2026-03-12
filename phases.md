@@ -248,7 +248,7 @@ feat: integrate Simli avatar with lip-sync, behavioral modes, and thinking anima
 ---
 
 ## Phase 6: Socratic State Machine + LLM Router
-**Status**: [ ] NOT STARTED
+**Status**: [x] DONE
 **Goal**: Excellent Socratic tutoring. State machine drives prompts. Dual-model routing.
 
 ### Tasks
@@ -449,6 +449,6 @@ feat: add benchmarking framework, latency regression tests, and full documentati
 | 3 | Sentence Chunker + TTS + Streaming Pipeline | [x] DONE |
 | 4 | Frontend Foundation + Audio Capture | [x] DONE |
 | 5 | Simli Avatar Integration | [x] DONE |
-| 6 | Socratic State Machine + LLM Router | [ ] NOT STARTED |
+| 6 | Socratic State Machine + LLM Router | [x] DONE |
 | 7 | Instrumentation + Latency Dashboard + Cost Tracking | [ ] NOT STARTED |
 | 8 | Benchmarking, Full Test Suite & Documentation | [ ] NOT STARTED |

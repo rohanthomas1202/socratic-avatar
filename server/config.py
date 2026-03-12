@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-6"
 
     # Avatar
-    simli_face_id: str = "tmp9i8bbq7c"  # Default Simli face
+    simli_face_id: str = "cace3ef7-a4c4-425d-a8cf-a5358eb0c427"
 
     model_config = {
         "env_file": str(Path(__file__).parent.parent / ".env"),

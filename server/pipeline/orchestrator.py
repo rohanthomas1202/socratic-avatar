@@ -11,6 +11,7 @@ Coordinates all pipeline stages for a single conversational turn:
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 
 from pipeline.vad import VoiceActivityDetector
@@ -26,6 +27,9 @@ from socratic.classifier import (
 )
 from socratic.concepts import get_concept, ConceptDefinition
 from socratic.prompts import get_system_prompt
+from instrumentation.metrics import MetricsAggregator
+from instrumentation.cost_tracker import CostTracker
+from instrumentation.logger import MetricsLogger
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,12 @@ class PipelineOrchestrator:
         self.session = SessionState()
         self.state_machine = SocraticStateMachine()
 
+        # Instrumentation
+        self.session_id = uuid.uuid4().hex[:12]
+        self.metrics_agg = MetricsAggregator()
+        self.cost_tracker = CostTracker()
+        self.metrics_logger = MetricsLogger()
+
         # Load concept
         self.concept: ConceptDefinition | None = None
         if concept_id:
@@ -71,6 +81,9 @@ class PipelineOrchestrator:
 
         self.concept_keywords = get_concept_keywords(self.concept.id) if self.concept else []
         self.expected_ideas = get_expected_ideas(self.concept.id) if self.concept else []
+
+        # Start metrics logging
+        self.metrics_logger.start_session(self.session_id, concept_id=concept_id or "division_by_zero")
 
     @property
     def current_state(self) -> SocraticState:
@@ -252,19 +265,39 @@ class PipelineOrchestrator:
         if t_tts_first is not None:
             tts_first_ms = (t_tts_first - t_stt_end) * 1000
 
+        turn_metrics = {
+            "stt_ms": round((t_stt_end - t_stt_start) * 1000, 1),
+            "llm_ttft_ms": round(ttft if not first_token else 0, 1),
+            "llm_total_ms": round((t_llm_end - t_llm_start) * 1000, 1),
+            "tts_first_ms": round(tts_first_ms, 1),
+            "e2e_ms": round((t_end - t_start) * 1000, 1),
+        }
+
+        # Record in aggregator and cost tracker
+        self.metrics_agg.record_turn(turn_metrics)
+        audio_seconds = len(audio_bytes) / (16000 * 2)  # PCM16 @ 16kHz
+        input_tokens = len(transcript.split()) * 2  # rough estimate
+        output_tokens = len(response_text.split()) * 2
+        turn_cost = self.cost_tracker.calculate_turn_cost(
+            turn_id=turn_id, model=model_name,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+            audio_seconds=audio_seconds, tts_characters=len(response_text),
+        )
+        self.metrics_logger.log_turn(
+            turn_id=turn_id, metrics=turn_metrics, cost=turn_cost.to_dict(),
+            socratic_state=new_state.value, model=model_name,
+            transcript=transcript, response_length=len(response_text),
+        )
+
         yield {
             "type": "turn_complete",
             "turn_id": turn_id,
             "text": response_text,
             "socratic_state": new_state.value,
             "model": model_name,
-            "metrics": {
-                "stt_ms": round((t_stt_end - t_stt_start) * 1000, 1),
-                "llm_ttft_ms": round(ttft if not first_token else 0, 1),
-                "llm_total_ms": round((t_llm_end - t_llm_start) * 1000, 1),
-                "tts_first_ms": round(tts_first_ms, 1),
-                "e2e_ms": round((t_end - t_start) * 1000, 1),
-            },
+            "metrics": turn_metrics,
+            "cost": turn_cost.to_dict(),
+            "session_metrics": self.metrics_agg.summary(),
         }
 
     async def process_text_turn_streaming(self, text: str):

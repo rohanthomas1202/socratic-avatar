@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -29,12 +30,13 @@ async def health():
 
 @app.post("/api/simli/token")
 async def simli_token():
-    """Generate a Simli session token (keeps API key server-side)."""
+    """Generate a Simli session token and ICE servers (keeps API key server-side)."""
     if not settings.simli_api_key:
         return {"error": "SIMLI_API_KEY not configured"}, 500
 
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
+        # Fetch session token and ICE servers in parallel
+        token_req = client.post(
             "https://api.simli.ai/startAudioToVideoSession",
             json={
                 "apiKey": settings.simli_api_key,
@@ -44,8 +46,23 @@ async def simli_token():
                 "maxIdleTime": 300,
             },
         )
-        resp.raise_for_status()
-        return resp.json()
+        ice_req = client.get(
+            "https://api.simli.ai/getIceServers",
+            params={"apiKey": settings.simli_api_key},
+        )
+
+        token_resp, ice_resp = await asyncio.gather(token_req, ice_req)
+        token_resp.raise_for_status()
+
+        result = token_resp.json()
+
+        # Attach ICE servers if available
+        if ice_resp.status_code == 200:
+            result["ice_servers"] = ice_resp.json()
+        else:
+            logger.warning(f"Failed to get ICE servers: {ice_resp.status_code}")
+
+        return result
 
 
 @app.websocket("/ws/session")
